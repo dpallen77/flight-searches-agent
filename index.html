@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flight agent</title>
+<style>
+:root{--bg:#e9eef2;--panel:#fff;--ink:#14212b;--mute:#5d6e7a;--line:#cfd9e0;--accent:#0b6e7f;--warn:#b7791f;--warnbg:#fff6e3}
+@media (prefers-color-scheme:dark){:root{--bg:#0f171d;--panel:#18232b;--ink:#e6edf1;--mute:#93a4af;--line:#2b3a45;--accent:#4cc3d6;--warn:#e2a646;--warnbg:#2a2417}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;justify-content:center}
+main{width:100%;max-width:720px;height:100%;display:flex;flex-direction:column;padding:16px}
+header{display:flex;justify-content:space-between;align-items:baseline;padding-bottom:12px}
+h1{font-size:1.15rem;margin:0}
+.meter{font-size:.85rem;color:var(--mute)}
+#log{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:4px 2px}
+.msg{max-width:90%;padding:10px 14px;border-radius:12px;background:var(--panel);border:1px solid var(--line)}
+.me{align-self:flex-end;background:var(--accent);color:#fff;border-color:var(--accent)}
+.card{background:var(--warnbg);border:1px solid var(--warn);border-radius:12px;padding:14px}
+.card p{margin:0 0 10px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+button{font:inherit;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:8px 14px;cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button:disabled{opacity:.5;cursor:default}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.offers{width:100%;border-collapse:collapse;font-size:.92rem}
+.offers td{padding:7px 8px;border-top:1px solid var(--line)}
+.offers td:last-child{text-align:right;font-weight:600}
+form{display:flex;gap:8px;padding-top:12px}
+input{flex:1;font:inherit;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+</style>
+</head>
+<body>
+<main>
+  <header><h1>Flight price agent</h1><span class="meter" id="meter" aria-live="polite"></span></header>
+  <div id="log" role="log" aria-live="polite"></div>
+  <form id="form">
+    <input id="input" autocomplete="off" aria-label="Message" placeholder="Cheapest way from Seattle to Lisbon around Nov 10?">
+    <button class="primary" type="submit">Send</button>
+  </form>
+</main>
+<script>
+const session = Math.random().toString(36).slice(2);
+const log = document.getElementById("log");
+const input = document.getElementById("input");
+
+function bubble(text, me){
+  const d = document.createElement("div");
+  d.className = "msg" + (me ? " me" : "");
+  d.textContent = text;
+  log.appendChild(d); log.scrollTop = log.scrollHeight;
+  return d;
+}
+
+function renderOffers(items){
+  const d = document.createElement("div"); d.className = "msg";
+  const rows = items.map(o =>
+    `<tr><td>${o.date}</td><td>${o.carrier}</td><td>${o.stops === 0 ? "Nonstop" : o.stops + " stop" + (o.stops > 1 ? "s" : "")}</td>` +
+    `<td>${Math.floor(o.minutes/60)}h ${o.minutes%60}m</td><td>${o.currency === "USD" ? "$" : o.currency + " "}${o.price}</td></tr>`).join("");
+  d.innerHTML = `<table class="offers"><tbody>${rows}</tbody></table>`;
+  log.appendChild(d); log.scrollTop = log.scrollHeight;
+}
+
+function renderApproval(e){
+  const d = document.createElement("div"); d.className = "card";
+  d.innerHTML = `<p><strong>This search needs ${e.new_calls} new API calls.</strong><br>
+    ${e.route}. ${e.cached} more are cached. You've used ${e.used} of ${e.limit} this month; this would leave ${e.after}.</p>
+    <div class="row"><button class="primary" data-d="proceed">Proceed</button>
+    <button data-d="narrow">Narrow search</button><button data-d="cancel">Cancel</button></div>`;
+  d.querySelectorAll("button").forEach(b => b.onclick = () => {
+    d.querySelectorAll("button").forEach(x => x.disabled = true);
+    send("/api/approval", {decision: b.dataset.d});
+  });
+  log.appendChild(d); log.scrollTop = log.scrollHeight;
+}
+
+function render(events){
+  for (const e of events){
+    if (e.type === "text") bubble(e.text, false);
+    else if (e.type === "offers") renderOffers(e.items);
+    else if (e.type === "approval") renderApproval(e);
+  }
+}
+
+function meter(u){ document.getElementById("meter").textContent = `${u.mode === "live" ? "Live fares" : "Mock fares"} · ${u.agent === "claude" ? "Claude agent" : "basic parser"} · ${u.used} of ${u.limit} calls`; }
+
+async function send(path, payload){
+  try {
+    const r = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({session, ...payload})});
+    const data = await r.json();
+    render(data.events); meter(data.usage);
+  } catch (err) {
+    bubble("Can't reach the local server. Check that server.py is still running.", false);
+  }
+}
+
+document.getElementById("form").onsubmit = ev => {
+  ev.preventDefault();
+  const text = input.value.trim(); if (!text) return;
+  bubble(text, true); input.value = "";
+  send("/api/chat", {message: text});
+};
+
+fetch("/api/usage").then(r => r.json()).then(u => {
+  meter(u);
+  bubble(u.agent === "claude"
+    ? "Ask in plain language, like: cheapest nonstop from Seattle to Lisbon around Nov 10, flexible by 2 days."
+    : "Tell me a route and date, like: SEA to LIS on 2026-11-10. Add 'flexible' or '±3' for nearby days.", false);
+});
+</script>
+</body>
+</html>
