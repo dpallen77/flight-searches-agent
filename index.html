@@ -53,12 +53,22 @@ function bubble(text, me){
   return d;
 }
 
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const stopsLabel = n => n === 0 ? "Nonstop" : n + " stop" + (n > 1 ? "s" : "");
+const dur = m => `${Math.floor(m/60)}h ${m%60}m`;
+
 function renderOffers(items){
   const d = document.createElement("div"); d.className = "msg";
-  const rows = items.map(o =>
-    `<tr><td>${o.date}</td><td>${o.carrier}</td><td>${o.stops === 0 ? "Nonstop" : o.stops + " stop" + (o.stops > 1 ? "s" : "")}</td>` +
-    `<td>${Math.floor(o.minutes/60)}h ${o.minutes%60}m</td><td>${o.currency === "USD" ? "$" : o.currency + " "}${o.price}</td></tr>`).join("");
-  d.innerHTML = `<table class="offers"><tbody>${rows}</tbody></table>`;
+  const rows = items.map(o => {
+    const rt = !!o.return_date;
+    const when = rt ? `${o.date} → ${o.return_date}` : o.date;
+    const who = rt && o.in_carrier !== o.carrier ? `${esc(o.carrier)} / ${esc(o.in_carrier)}` : esc(o.carrier);
+    const stops = rt ? `${stopsLabel(o.stops)} / ${stopsLabel(o.in_stops)}` : stopsLabel(o.stops);
+    const time = rt ? `${dur(o.minutes)} / ${dur(o.in_minutes)}` : dur(o.minutes);
+    const cur = o.currency === "USD" ? "$" : esc(o.currency) + " ";
+    return `<tr><td>${when}</td><td>${who}</td><td>${stops}</td><td>${time}</td><td>${cur}${o.price}</td></tr>`;
+  }).join("");
+  d.innerHTML = `<div style="overflow-x:auto"><table class="offers"><tbody>${rows}</tbody></table></div>`;
   log.appendChild(d); log.scrollTop = log.scrollHeight;
 }
 
@@ -106,7 +116,7 @@ document.getElementById("form").onsubmit = ev => {
 fetch("/api/usage").then(r => r.json()).then(u => {
   meter(u);
   bubble(u.agent === "claude"
-    ? "Ask in plain language, like: cheapest nonstop from Seattle to Lisbon around Nov 10, flexible by 2 days."
+    ? "Ask in plain language, like: cheapest nonstop from Seattle to Lisbon around Nov 10, flexible by 2 days. Add a return date for a round trip."
     : "Tell me a route and date, like: SEA to LIS on 2026-11-10. Add 'flexible' or '±3' for nearby days.", false);
 });
 </script>
